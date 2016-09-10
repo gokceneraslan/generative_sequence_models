@@ -1,2 +1,4 @@
 .R*
 .idea
+__pycache__
+.Rproj.user
