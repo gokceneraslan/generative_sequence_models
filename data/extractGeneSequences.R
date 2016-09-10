@@ -91,11 +91,11 @@ qplot(width(tr[!grepl('pseudo', mart.df.tr$gene_biotype)]), bins=100, color=I('w
   scale_x_log10() +
   theme_bw()
 
-qplot(width(gn[mart.df$gene_biotype == 'protein_coding']), color=I('white'), bins=100) +
+qplot(width(tr[mart.df.tr$gene_biotype == 'protein_coding']), color=I('white'), bins=100) +
   scale_x_log10() +
   theme_bw()
 
-summary(width(gn[mart.df$gene_biotype == 'protein_coding']))
+summary(width(tr[mart.df.tr$gene_biotype == 'protein_coding']))
 
 # Get sequences -----------------------------------------------------------
 #sq.dnastr <- getSeq(BSgenome.Hsapiens.UCSC.hg38, gn)
