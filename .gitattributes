@@ -1,3 +1,2 @@
-sequences_gene.tsv.bz2 filter=lfs diff=lfs merge=lfs -text
-sequences_transcript.tsv.bz2 filter=lfs diff=lfs merge=lfs -text
-ensembl.txdb filter=lfs diff=lfs merge=lfs -text
+*.bz2 filter=lfs diff=lfs merge=lfs -text
+*.txdb filter=lfs diff=lfs merge=lfs -text
