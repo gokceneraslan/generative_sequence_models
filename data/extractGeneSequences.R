@@ -7,6 +7,8 @@ library(tibble)
 library(readr)
 library(biomaRt)
 
+set.seed(42)
+
 # Load or generate ENSEMBL txdb -------------------------------------------
 if (!file.exists('ensembl.txdb')) {
   txdb <- makeTxDbFromBiomart(dataset="hsapiens_gene_ensembl")
@@ -97,37 +99,35 @@ qplot(width(tr[mart.df.tr$gene_biotype == 'protein_coding']), color=I('white'), 
 
 summary(width(tr[mart.df.tr$gene_biotype == 'protein_coding']))
 
+
 # Get sequences -----------------------------------------------------------
-#sq.dnastr <- getSeq(BSgenome.Hsapiens.UCSC.hg38, gn)
-#colSums(alphabetFrequency(sq.dnastr)) #ensure there is only ACGTN
 sq.gn <- getSeq(BSgenome.Hsapiens.UCSC.hg38, gn, as.character=T)
-sq.gn <- chartr('ACGTN', '12345', sq.gn)
-write_tsv(tibble(sequence=sq.gn,
-                 gene_id=gn$gene_id), 'sequences_gene.tsv')
+write_tsv(tibble(sequence=sq.gn), 'sequences_gene.seq', col_names=F)
+write_tsv(tibble(ids=gn$gene_id), 'sequences_gene.id.tsv', col_names=F)
 
 sq.tr <- getSeq(BSgenome.Hsapiens.UCSC.hg38, tr, as.character=T)
-sq.tr <- chartr('ACGTN', '12345', sq.tr)
-write_tsv(tibble(sequence=sq.tr,
-                 tx_id=tr$tx_name,
-                 gene_id=unlist(tr$gene_id)), 'sequences_transcript.tsv')
-
+write_tsv(tibble(sequence=sq.tr), 'sequences_transcript.seq', col_names=F)
+write_tsv(tibble(tx_id=tr$tx_name,
+                 gene_id=unlist(tr$gene_id)), 'sequences_transcript.id.tsv')
 
 # sq.cd <- getSeq(BSgenome.Hsapiens.UCSC.hg38, cd, as.character=T)
-# sq.cd <- chartr('ACGTN', '12345', sq.cd)
-# write_tsv(tibble(sequence=sq.cd,
-#                  chr=seqnames(cd),
-#                  start=start(cd),
-#                  end=end(cd),
-#                  tx_id=unlist(cd$tx_name),
-#                  gene_id=unlist(cd$gene_id)), 'sequences_cds.tsv')
-
 
 tr.sub <- tr[(width(tr) > 1000 & width(tr) < 10000)]
-sq.tr.sub <- getSeq(BSgenome.Hsapiens.UCSC.hg38, tr.sub, as.character=T)
-sq.tr.sub <- chartr('ACGTN', '12345', sq.tr.sub)
-write_tsv(tibble(sequence=sq.tr.sub,
-                 tx_id=tr.sub$tx_name,
-                 gene_id=unlist(tr.sub$gene_id)), 'sequences_transcript_sub.tsv')
+tr.sub.genes <- unique(unlist(tr.sub$gene_id))
+tr.sub.validation.genes <- tr.sub.genes[sample(seq_along(tr.sub.genes), length(tr.sub.genes)*0.1)]
+tr.sub.validation <- tr.sub[unlist(tr.sub$gene_id) %in% tr.sub.validation.genes]
+tr.sub.training <- tr.sub[!(unlist(tr.sub$gene_id) %in% tr.sub.validation.genes)]
+
+sq.tr.sub.training <- getSeq(BSgenome.Hsapiens.UCSC.hg38, tr.sub.training, as.character=T)
+sq.tr.sub.validation <- getSeq(BSgenome.Hsapiens.UCSC.hg38, tr.sub.validation, as.character=T)
+
+write_tsv(tibble(sequence=sq.tr.sub.training), 'sequences_transcript_sub_training.seq', col_names=F)
+write_tsv(tibble(tx_id=tr.sub.training$tx_name,
+                 gene_id=unlist(tr.sub.training$gene_id)), 'sequences_transcript_sub_training.id.tsv')
+
+write_tsv(tibble(sequence=sq.tr.sub.validation), 'sequences_transcript_sub_validation.seq', col_names=F)
+write_tsv(tibble(tx_id=tr.sub.validation$tx_name,
+                 gene_id=unlist(tr.sub.validation$gene_id)), 'sequences_transcript_sub_validation.id.tsv')
 
 
 gc()
