@@ -36,6 +36,7 @@ import os
 import random
 import sys
 import time
+import copy
 
 import numpy as np
 import tensorflow as tf
@@ -53,9 +54,8 @@ tf.app.flags.DEFINE_integer("batch_size", 64,
                             "Batch size to use during training.")
 tf.app.flags.DEFINE_integer("size", 1024, "Size of each model layer.")
 tf.app.flags.DEFINE_integer("num_layers", 3, "Number of layers in the model.")
-tf.app.flags.DEFINE_integer("en_vocab_size", 40000, "English vocabulary size.")
-tf.app.flags.DEFINE_integer("fr_vocab_size", 40000, "French vocabulary size.")
-tf.app.flags.DEFINE_string("data_dir", "data", "Data directory")
+tf.app.flags.DEFINE_string("training_file", None, "Training sequence file")
+tf.app.flags.DEFINE_string("validation_file", None, "Validation sequence file")
 tf.app.flags.DEFINE_string("train_dir", "data", "Training directory.")
 tf.app.flags.DEFINE_integer("max_train_data_size", 0,
                             "Limit on the size of training data (0: no limit).")
@@ -72,17 +72,14 @@ FLAGS = tf.app.flags.FLAGS
 
 # We use a number of buckets and pad to the closest one for efficiency.
 # See seq2seq_model.Seq2SeqModel for details of how they work.
-_buckets = [(5, 10), (10, 15), (20, 25), (40, 50)]
+_buckets = list(zip(range(1000, 10000, 80), range(1000, 10000, 80)))
 
 
-def read_data(source_path, target_path, max_size=None):
+def read_data(source_path, max_size=None):
   """Read data from source and target files and put into buckets.
 
   Args:
-    source_path: path to the files with token-ids for the source language.
-    target_path: path to the file with token-ids for the target language;
-      it must be aligned with the source file: n-th line contains the desired
-      output for n-th line from the source_path.
+    source_path: path to the files with token-ids for the sequences.
     max_size: maximum number of lines to read, all other will be ignored;
       if 0 or None, data files will be read completely (no limit).
 
@@ -94,31 +91,29 @@ def read_data(source_path, target_path, max_size=None):
   """
   data_set = [[] for _ in _buckets]
   with tf.gfile.GFile(source_path, mode="r") as source_file:
-    with tf.gfile.GFile(target_path, mode="r") as target_file:
-      source, target = source_file.readline(), target_file.readline()
-      counter = 0
-      while source and target and (not max_size or counter < max_size):
-        counter += 1
-        if counter % 100000 == 0:
-          print("  reading data line %d" % counter)
-          sys.stdout.flush()
-        source_ids = [int(x) for x in source.split()]
-        target_ids = [int(x) for x in target.split()]
-        target_ids.append(data_utils.EOS_ID)
-        for bucket_id, (source_size, target_size) in enumerate(_buckets):
-          if len(source_ids) < source_size and len(target_ids) < target_size:
-            data_set[bucket_id].append([source_ids, target_ids])
-            break
-        source, target = source_file.readline(), target_file.readline()
+    source = source_file.readline()
+    counter = 0
+    while source and (not max_size or counter < max_size):
+      counter += 1
+      if counter % 5000 == 0:
+        print("  reading data line %d" % counter)
+        sys.stdout.flush()
+      source_ids = [int(x) for x in source.split()]
+      target_ids = copy.deepcopy(source_ids)
+      target_ids.append(data_utils.EOS_ID)
+      for bucket_id, (source_size, target_size) in enumerate(_buckets):
+        if len(source_ids) < source_size and len(target_ids) < target_size:
+          data_set[bucket_id].append([source_ids, target_ids])
+          break
+      source = source_file.readline()
   return data_set
 
 
-def create_model(session, forward_only):
+def create_model(session, vocab_size, forward_only):
   """Create translation model and initialize or load parameters in session."""
   dtype = tf.float16 if FLAGS.use_fp16 else tf.float32
   model = seq2seq_model.Seq2SeqModel(
-      FLAGS.en_vocab_size,
-      FLAGS.fr_vocab_size,
+      vocab_size,
       _buckets,
       FLAGS.size,
       FLAGS.num_layers,
@@ -139,22 +134,28 @@ def create_model(session, forward_only):
 
 
 def train():
-  """Train a en->fr translation model using WMT data."""
-  # Prepare WMT data.
-  print("Preparing WMT data in %s" % FLAGS.data_dir)
-  en_train, fr_train, en_dev, fr_dev, _, _ = data_utils.prepare_wmt_data(
-      FLAGS.data_dir, FLAGS.en_vocab_size, FLAGS.fr_vocab_size)
+  """Train a sequence-to-sequence model."""
+
+  assert FLAGS.training_file, 'Training file is required'
+  assert FLAGS.validation_file, 'Validation file is required'
+
+  # Prepare sequence data.
+  print("Preparing the sequence data in %s" % FLAGS.training_file)
+  train_seq, valid_seq, vocab_file = data_utils.prepare_sequence_data(FLAGS.training_file,
+                                                                      FLAGS.validation_file)
+
+  vocab_size = len(open(vocab_file).read().split())
 
   with tf.Session() as sess:
     # Create model.
     print("Creating %d layers of %d units." % (FLAGS.num_layers, FLAGS.size))
-    model = create_model(sess, False)
+    model = create_model(sess, vocab_size, False)
 
     # Read data into buckets and compute their sizes.
-    print ("Reading development and training data (limit: %d)."
+    print ("Reading validation and training data (limit: %d)."
            % FLAGS.max_train_data_size)
-    dev_set = read_data(en_dev, fr_dev)
-    train_set = read_data(en_train, fr_train, FLAGS.max_train_data_size)
+    valid_set = read_data(valid_seq)
+    train_set = read_data(train_seq, FLAGS.max_train_data_size)
     train_bucket_sizes = [len(train_set[b]) for b in range(len(_buckets))]
     train_total_size = float(sum(train_bucket_sizes))
 
@@ -202,11 +203,11 @@ def train():
         step_time, loss = 0.0, 0.0
         # Run evals on development set and print their perplexity.
         for bucket_id in range(len(_buckets)):
-          if len(dev_set[bucket_id]) == 0:
+          if len(valid_set[bucket_id]) == 0:
             print("  eval: empty bucket %d" % (bucket_id))
             continue
           encoder_inputs, decoder_inputs, target_weights = model.get_batch(
-              dev_set, bucket_id)
+              valid_set, bucket_id)
           _, eval_loss, _ = model.step(sess, encoder_inputs, decoder_inputs,
                                        target_weights, bucket_id, True)
           eval_ppx = math.exp(float(eval_loss)) if eval_loss < 300 else float(
